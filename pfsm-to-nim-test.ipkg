@@ -1,0 +1,6 @@
+package pfsm-to-nim-test
+
+depends = contrib, pfsm
+main = NimTest
+executable = pfsm-to-nim-test
+

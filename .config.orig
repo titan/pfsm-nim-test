@@ -1,0 +1,2 @@
+NAME=pfsm-to-nim-test
+BUILDDIR=/dev/shm/$(NAME-LINK)

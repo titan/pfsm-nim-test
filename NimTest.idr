@@ -182,26 +182,14 @@ toNim conf refs fsm
 
         permutate : Path -> List Path
         permutate p
-          = let xs = map splitEdge p
-                len = size xs
-                stacks = initEmptyStack len in
-                map reverse $ foldl (\acc, x => subpermutate [] x acc x) stacks xs
+          = let xs = map splitEdge p in
+                map reverse $ permutate' [[]] xs
           where
-            size : List (List1 Edge) -> Nat
-            size = foldl (\acc, x => acc * (length x)) 1
-
-            initEmptyStack : Nat -> List (Stack Edge)
-            initEmptyStack
-              = initEmptyStack' []
-              where
-                initEmptyStack' : List (Stack Edge) -> Nat -> List (Stack Edge)
-                initEmptyStack' acc Z     = acc
-                initEmptyStack' acc (S n) = initEmptyStack' ([] :: acc) n
-
-            subpermutate : List (Stack Edge) -> List1 Edge -> List (Stack Edge) -> List1 Edge -> List (Stack Edge)
-            subpermutate acc edges []        _                 = acc
-            subpermutate acc edges (s :: ss) (e :: [])         = subpermutate ((push e s) :: acc) edges ss edges
-            subpermutate acc edges (s :: ss) (e :: (e' :: es)) = subpermutate ((push e s) :: acc) edges ss (e' :: es)
+            permutate' : List (Stack Edge) -> List (List1 Edge) -> List (Stack Edge)
+            permutate' parents []            = parents
+            permutate' parents (es :: edges) = let es' = List1.toList es
+                                                   newparents = flatten $ map (\parent => map (\x => push x parent) es') parents in
+                                                   permutate' newparents edges
 
     liftReference : Fsm -> Maybe (Name, Event, List1 Participant)
     liftReference fsm@(MkFsm name _ _ events _ transitions _)

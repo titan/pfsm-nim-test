@@ -261,7 +261,7 @@ toNim conf refs fsm
     generateTest : String -> String -> State -> List Participant -> List (Name, Event, List1 Participant) -> Path -> IO String
     generateTest pre name start participants refers path
       = do codes <- liftListIO $ map (generateStep indentDelta name start) path
-           referCodes <- liftListIO $ map (generateInitReference indentDelta) refers
+           referCodes <- liftListIO $ map (generateInitReference indentDelta) $ reverse refers
            pure $ List.join "\n" [ "proc test(): void ="
                                  , (indent indentDelta) ++ "let"
                                  , (indent (indentDelta * 2)) ++ "expireat = fromUnix(now().toTime.toUnix + 365 * 24 * 60 * 60).utc.format(\"yyMMddHHmmssffffff\").parseBiggestUInt"
@@ -284,7 +284,7 @@ toNim conf refs fsm
         generateInitReference : Nat -> (Name, Event, List1 Participant) -> IO String
         generateInitReference idt (ref, (MkEvent ename params ms), ((MkParticipant pname _) :: _))
           = do params <- liftCreatorParameters params
-               let code = List.join "\n" [ (indent idt) ++ "let " ++ (toNimName ref) ++ "_id_opt = " ++ (toNimName ref) ++ "." ++ (toNimFuncName ename) ++ "(" ++ (toNimName pname) ++ ", " ++ (List.join ", " params) ++ ")"
+               let code = List.join "\n" [ (indent idt) ++ "let " ++ (toNimName ref) ++ "_id_opt = " ++ (toNimName ref) ++ "." ++ (toNimFuncName ename) ++ "(" ++ (toNimName pname) ++ "_caller, " ++ (List.join ", " params) ++ ")"
                                          , (indent idt) ++ "if " ++ (toNimName ref) ++ "_id_opt.isNone:"
                                          , (indent (idt + indentDelta)) ++ "echo \"Failure in reference " ++ ref ++ "\""
                                          , (indent (idt + indentDelta)) ++ "return"
@@ -294,7 +294,7 @@ toNim conf refs fsm
 
         generateInitParticipant : Nat -> Nat -> Participant -> String
         generateInitParticipant idt idx (MkParticipant pname _)
-          = List.join "\n" [ (indent idt) ++ (toNimName pname) ++ " = Caller("
+          = List.join "\n" [ (indent idt) ++ (toNimName pname) ++ "_caller = Caller("
                            , (indent (idt + indentDelta)) ++ "host: \"127.0.0.1\","
                            , (indent (idt + indentDelta)) ++ "port: 808" ++ (show idx) ++ ","
                            , (indent (idt + indentDelta)) ++ "tenant: 1'u64,"
@@ -308,7 +308,7 @@ toNim conf refs fsm
         generateEventCall : Nat -> Name -> Bool -> List String -> Participant -> Event -> Maybe TestExpression -> String
         generateEventCall idt name True  params (MkParticipant pname _) (MkEvent ename _ _) guard
           = let params' = join ", " params in
-                List.join "\n" [ (indent idt) ++ "let fsmid_opt = " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ "(" ++ (toNimName pname) ++ ", " ++ params' ++ ")"
+                List.join "\n" [ (indent idt) ++ "let fsmid_opt = " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ "(" ++ (toNimName pname) ++ "_caller, " ++ params' ++ ")"
                                , (indent idt) ++ "if fsmid_opt.isNone:"
                                , (indent (idt + indentDelta)) ++ "echo \"Failure in event " ++ ename ++ "\""
                                , (indent (idt + indentDelta)) ++ "return"
@@ -317,11 +317,11 @@ toNim conf refs fsm
 
         generateEventCall idt name False params (MkParticipant pname _) (MkEvent ename _ _) guard
           = let params' = join ", " params in
-                (indent idt) ++ "discard " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ (if (length params') > Z then "(" ++ (toNimName pname) ++ ", fsmid, " ++ params' ++ ")" else ("(" ++ (toNimName pname) ++ ", fsmid)"))
+                (indent idt) ++ "discard " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ (if (length params') > Z then "(" ++ (toNimName pname) ++ "_caller, fsmid, " ++ params' ++ ")" else ("(" ++ (toNimName pname) ++ "_caller, fsmid)"))
 
         generateStateFetch : Nat -> Name -> Participant -> State -> String
         generateStateFetch idt name (MkParticipant pname _) (MkState sname _ _ _)
-          = List.join "\n" [ (indent idt) ++ "objs = " ++ (toNimName pname) ++ ".get_" ++ (toNimName sname) ++ "_" ++ (toNimName name) ++ "_list(0, 0x7FFFFFFF)"
+          = List.join "\n" [ (indent idt) ++ "objs = " ++ (toNimName pname) ++ "_caller.get_" ++ (toNimName sname) ++ "_" ++ (toNimName name) ++ "_list(0, 0x7FFFFFFF)"
                            , (indent idt) ++ "found = false"
                            , (indent idt) ++ "for obj in objs:"
                            , (indent (idt + indentDelta)) ++ "if obj.fsmid == fsmid:"

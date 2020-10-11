@@ -97,6 +97,9 @@ mutual
                                                           let code = List.join ", " $ map (\(k, v) => k ++ ": " ++ v) $ SortedMap.toList mappings
                                                           pure ("{ " ++ code ++ " }.newTable")
 
+  toNimExample (TRecord n ps)                        = do params <- liftListIO $ map (\(n', t, _) => do v <- toNimExample t; pure(n', v)) ps
+                                                          pure ((camelize n) ++ "(" ++ (List.join ", " (map (\(n', t) => n' ++ ": " ++ t) params)) ++ ")")
+
   toNimExample _                                     = pure ""
 
 toNim : AppConfig -> SortedMap Name Fsm -> Fsm -> IO ()

@@ -35,15 +35,14 @@ record AppConfig where
 indentDelta : Nat
 indentDelta = 2
 
-liftListIO : List (IO a) -> IO (List a)
-liftListIO lst
-  = do lst' <- foldl (\acc, x => do acc' <- acc; x' <- x; pure (x' :: acc')) (pure []) lst
-       pure (reverse lst')
-
-joinIO : String -> List (IO String) -> IO String
-joinIO sep lst
- = do lst' <- liftListIO lst
-      pure (join sep lst')
+Show AppConfig where
+  show (MkAppConfig src model library refs)
+    = List.join "\n" [ "src: " ++ src
+                     , "model: " ++ (show model)
+                     , "library: " ++ (show library)
+                     , "refs:"
+                     , List.join "\n" $ map (\x => (indent indentDelta) ++ x) refs
+                     ]
 
 chars : List Char
 chars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', ' ']
@@ -395,21 +394,6 @@ toNim conf refs fsm
         pathToFilename : State -> Path -> String
         pathToFilename (MkState sname _ _ _) path
           = "test_" ++ (toNimName sname) ++ "_" ++ (join "_" (map edgeToFilename path))
-
-loadFsm : String -> Either String Fsm
-loadFsm src
-  = do (sexp, _) <- mapError parseErrorToString $ parseSExp src
-       (fsm, _) <- mapError parseErrorToString $ analyse sexp
-       fsm' <- mapError checkersErrorToString $ check fsm defaultCheckingRules
-       pure fsm'
-
-loadFsmFromFile : String -> IO (Either String Fsm)
-loadFsmFromFile file
-  = do Right content <- readFile file
-       | Left err => pure (Left $ show err)
-       case loadFsm content of
-            Left err => pure (Left err)
-            Right fsm => pure (Right fsm)
 
 doWork : AppConfig -> IO ()
 doWork conf

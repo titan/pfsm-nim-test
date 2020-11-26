@@ -196,9 +196,9 @@ toNim conf refs fsm
     liftReference : Fsm -> Maybe (Name, Event, List1 Participant)
     liftReference fsm@(MkFsm name _ _ events _ transitions _)
       = let evts = foldl (\acc, evt@(MkEvent _ _ ms) =>
-                     case lookup "creator" ms of
-                          Just _ => evt :: acc
-                          Nothing => acc) (the (List Event) []) events
+                     case fsmIdStyleOfEvent evt of
+                          FsmIdStyleGenerate => evt :: acc
+                          _ => acc) (the (List Event) []) events
             xs = foldl (\acc, evt =>
                    foldl (\acc', (MkTransition _ _ ts) =>
                      foldl (\acc'', (MkTrigger ps e _ _) =>
@@ -238,7 +238,7 @@ toNim conf refs fsm
                        , (indent indentDelta) ++ "close(dbconn)"
                        , (indent indentDelta) ++ "discard cache.select(1)"
                        , (indent indentDelta) ++ "discard cache.flushdb()"
-                       , (indent indentDelta) ++ "discard quit(cache)"
+                       , (indent indentDelta) ++ "discard cache.quit()"
                        , List.join "\n" $ map (\(i, x) => generateStartGetway indentDelta i x) $ enumerate participants
                        , List.join "\n" $ map (generateStartService indentDelta) services
                        , (indent indentDelta) ++ "sleep(1000)"
@@ -246,7 +246,7 @@ toNim conf refs fsm
       where
         generateStartGetway : Nat -> Nat -> Participant -> String
         generateStartGetway idt idx (MkParticipant name _)
-          = (indent idt) ++ "processes &= startProcess(\"" ++ (name ++ "-server") ++ "\", args = [\"--redis-db=1\", \"--port=808" ++ (show idx) ++ "\", \"1\"])"
+          = (indent idt) ++ "processes &= startProcess(\"" ++ (name ++ "-server") ++ "\", args = [\"--redis-db=1\", \"--port=808" ++ (show idx) ++ "\", \"1\", \"--ignore-permissions\"])"
 
         generateStartService : Nat -> String -> String
         generateStartService idt name
@@ -307,19 +307,28 @@ toNim conf refs fsm
                            , (indent idt) ++ ")"
                            ]
 
-        generateEventCall : Nat -> Name -> Bool -> List String -> Participant -> Event -> Maybe TestExpression -> String
-        generateEventCall idt name True  params (MkParticipant pname _) (MkEvent ename _ _) guard
+        generateEventCall : Nat -> Name -> Bool -> List String -> Participant -> Event -> Maybe TestExpression -> FsmIdStyle -> String
+        generateEventCall idt name True  params (MkParticipant pname _) evt@(MkEvent ename _ _) guard fsmIdStyle
           = let params' = join ", " params in
-                List.join "\n" [ (indent idt) ++ "let fsmid_opt = " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ "(" ++ (toNimName pname) ++ "_caller, " ++ params' ++ ")"
-                               , (indent idt) ++ "if fsmid_opt.isNone:"
-                               , (indent (idt + indentDelta)) ++ "echo \"Failure in event " ++ ename ++ "\""
-                               , (indent (idt + indentDelta)) ++ "return"
-                               , (indent idt) ++ "let fsmid = fsmid_opt.get"
-                               ]
+                if fsmIdStyle == FsmIdStyleSession
+                   then List.join "\n" [ (indent idt) ++ "if not " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ "(" ++ (toNimName pname) ++ "_caller, " ++ params' ++ "):"
+                                       , (indent (idt + indentDelta)) ++ "echo \"Failure in event " ++ ename ++ "\""
+                                       , (indent (idt + indentDelta)) ++ "return"
+                                       ]
+                   else List.join "\n" [ (indent idt) ++ "let fsmid_opt = " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ "(" ++ (toNimName pname) ++ "_caller, " ++ params' ++ ")"
+                                       , (indent idt) ++ "if fsmid_opt.isNone:"
+                                       , (indent (idt + indentDelta)) ++ "echo \"Failure in event " ++ ename ++ "\""
+                                       , (indent (idt + indentDelta)) ++ "return"
+                                       , (indent idt) ++ "let fsmid = fsmid_opt.get"
+                                       ]
 
-        generateEventCall idt name False params (MkParticipant pname _) (MkEvent ename _ _) guard
+        generateEventCall idt name False params (MkParticipant pname _) evt@(MkEvent ename _ _) guard fsmIdStyle
           = let params' = join ", " params in
-                (indent idt) ++ "discard " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ (if (length params') > Z then "(" ++ (toNimName pname) ++ "_caller, fsmid, " ++ params' ++ ")" else ("(" ++ (toNimName pname) ++ "_caller, fsmid)"))
+                if fsmIdStyle == FsmIdStyleSession
+                   then List.join "\n" [ (indent idt) ++ "if not " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ (if (length params') > Z then "(" ++ (toNimName pname) ++ "_caller, " ++ params' ++ "):" else ("(" ++ (toNimName pname) ++ "_caller):"))
+                                       , (indent (idt + indentDelta)) ++ "echo \"Failure in event " ++ ename ++ "\""
+                                       ]
+                   else (indent idt) ++ "discard " ++ (toNimName name) ++ "." ++ (toNimName ename) ++ (if (length params') > Z then "(" ++ (toNimName pname) ++ "_caller, fsmid, " ++ params' ++ ")" else ("(" ++ (toNimName pname) ++ "_caller, fsmid)"))
 
         generateStateFetch : Nat -> Name -> Participant -> State -> String
         generateStateFetch idt name (MkParticipant pname _) (MkState sname _ _ _)
@@ -337,9 +346,10 @@ toNim conf refs fsm
         generateStep : Nat -> String -> State -> Edge -> IO String
         generateStep idt name start (MkTransition src dst ((MkTrigger (participant :: _) evt@(MkEvent _ params _) guard _) :: _))
           = do params' <- liftCreatorParameters params
-               pure $ List.join "\n" [ generateEventCall idt name (src == start) params' participant evt guard
-                                     , generateStateFetch idt name participant dst
-                                     ]
+               let fsmIdStyle = fsmIdStyleOfEvent evt
+               pure $ join "\n" $ List.filter nonblank [ generateEventCall idt name (src == start) params' participant evt guard fsmIdStyle
+                                                       , if fsmIdStyle == FsmIdStyleSession then "" else generateStateFetch idt name participant dst
+                                                       ]
 
     generateMain : String
     generateMain
@@ -360,7 +370,7 @@ toNim conf refs fsm
 
     generate : String -> String -> String -> State -> List Parameter -> SortedMap Name Fsm -> Path -> IO ()
     generate pre name dstpath start model refs path
-      = let filename = dstpath ++ "/" ++ (pathToFilename start path) ++ ".nim"
+      = let filename = dstpath ++ "/" ++ (pathToFilename name start path) ++ ".nim"
             participants = nub $ map (\(MkTransition _ _ ((MkTrigger (p :: _) _ _ _):: _)) => p) path
 
             refers = nubBy (\(n1, e1, ps1), (n2, e2, ps2) => n1 == n2 && e1 == e2 && (List1.toList ps1) == (List1.toList ps2)) $ fromMaybe (the (List (Name, Event, List1 Participant)) []) $ liftMaybeList $ map liftReference $ values refs
@@ -391,9 +401,9 @@ toNim conf refs fsm
         edgeToFilename (MkTransition _ (MkState sname _ _ _) ((MkTrigger ((MkParticipant pname _) :: _) (MkEvent ename _ _) _ _) :: _)) = (toNimName pname) ++ "_" ++ (toNimName ename) ++ "_" ++ (toNimName sname)
         edgeToFilename (MkTransition _ (MkState sname _ _ _) _)                                                                         = (toNimName sname)
 
-        pathToFilename : State -> Path -> String
-        pathToFilename (MkState sname _ _ _) path
-          = "test_" ++ (toNimName sname) ++ "_" ++ (join "_" (map edgeToFilename path))
+        pathToFilename : String -> State -> Path -> String
+        pathToFilename name (MkState sname _ _ _) path
+          = "test_" ++ (toNimName name) ++ "_" ++ (toNimName sname) ++ "_" ++ (join "_" (map edgeToFilename path))
 
 doWork : AppConfig -> IO ()
 doWork conf
